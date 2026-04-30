@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #003366;
+  --color-primary-dark: #002244;
+  --color-accent: #FFA500;
+  --color-accent-hover: #FF8C00;
+  --color-secondary: #FFFFFF;
+  --color-text-main: #333333;
+  --color-text-muted: #666666;
+  --color-muted: #F5F5F5;
+  --color-muted-border: #E5E7EB;
+
+  --font-sans: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply bg-muted text-text-main font-sans antialiased;
+  }
+}
+
+/* Scrollbar customizations */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-muted);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-muted-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #cbd5e1;
+}
+
+/* Custom highlight class for diffs */
+.diff-highlight {
+  @apply bg-accent/30 border-b-2 border-accent transition-colors;
+}
+
+.diff-highlight:hover {
+  @apply bg-accent/50 cursor-pointer;
+}
+
+/* Document content styles */
+.doc-content {
+  @apply text-text-main;
+}
+
+.doc-content p {
+  @apply mb-4 leading-relaxed;
+}
