@@ -30,7 +30,7 @@ const ProjectTab: React.FC = () => {
           {projects.length === 0 ? (
             <div className="flex-1 flex flex-col items-center justify-center text-text-muted">
               <FolderGit2 size={64} className="mb-4 opacity-20" />
-              <h3 className="text-xl font-bold text-primary mb-2">Welcome to Schlafender Hase!</h3>
+              <h3 className="text-xl font-bold text-primary mb-2">Welcome to DocDiff!</h3>
               <p className="text-sm max-w-md text-center mb-6">You don't have any projects yet. Create your first project to start comparing documents and organizing your workflow.</p>
               <button className="bg-primary text-white px-6 py-2.5 rounded-lg shadow-sm font-bold hover:bg-primary-dark transition-colors flex items-center gap-2">
                 <Plus size={18} /> Create New Project

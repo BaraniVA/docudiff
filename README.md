@@ -1,73 +1,65 @@
-# React + TypeScript + Vite
+# DocDiff - Document Analysis Platform
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A modern, AI-powered document comparison and analysis application designed for professional-grade revision tracking and regulatory compliance.
 
-Currently, two official plugins are available:
+## 🚀 Features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- **Advanced Comparison Engine:** Word-level diffing with visual highlighting for additions, deletions, and modifications.
+- **Multi-Format Support:** Seamlessly process PDF, DOCX, and TXT files with layout preservation.
+- **AI-Powered Analysis:** Leverages Gemini 3.0 Flash to explain complex semantic deviations and provide context-aware insights.
+- **Interactive Workspace:** 
+  - Dual-pane side-by-side viewer.
+  - Smooth scroll-to-deviation synchronization.
+  - Flash-highlighting for active changes.
+- **Full Document Lifecycle:**
+  - **Project Management:** Track multiple comparison projects with dedicated templates.
+  - **Review Workflow:** Dedicated "Check" tab for approving/rejecting changes with a full audit trail.
+  - **Version Control:** Manage document revisions and history.
+  - **Export Hub:** Generate professional reports in PDF, Word, or HTML formats.
 
-## React Compiler
+## 🛠️ Technology Stack
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- **Frontend:** React + TypeScript
+- **Bundler:** Vite
+- **Styling:** Tailwind CSS (v4)
+- **AI Logic:** Google Generative AI (Gemini)
+- **File Parsing:** PDF.js, Mammoth (for DOCX)
+- **Icons:** Lucide React
 
-## Expanding the ESLint configuration
+## 📦 Installation & Setup
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+1. **Clone the repository:**
+   ```bash
+   git clone <repository-url>
+   cd docudiff
+   ```
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+3. **Configure Environment Variables:**
+   Create a `.env` file in the root directory and add your Gemini API key:
+   ```env
+   VITE_GEMINI_API_KEY=your_gemini_api_key_here
+   ```
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+4. **Run the development server:**
+   ```bash
+   npm run dev
+   ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+5. **Build for production:**
+   ```bash
+   npm run build
+   ```
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## 🛡️ Security
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Privacy First:** All document processing occurs locally or via secure API calls.
+- **Secret Management:** Sensitive keys are managed via `.env` and excluded from version control.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
