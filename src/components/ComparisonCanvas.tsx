@@ -1,20 +1,121 @@
-import React, { useState, useRef } from 'react';
-import { ZoomIn, ZoomOut, Maximize, MousePointer2, Type, FileSearch, Upload } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ZoomIn, ZoomOut, Maximize, Upload, Eye, GitCompare } from 'lucide-react';
+import { renderAsync } from 'docx-preview';
+import type { ParseResult } from '../utils/fileParser';
 
 interface ComparisonCanvasProps {
-  originalHtml: string;
-  copyHtml: string;
+  originalDiffHtml: string;
+  copyDiffHtml: string;
+  originalDisplay: ParseResult | null;
+  copyDisplay: ParseResult | null;
   onUploadOriginal: (file: File) => void;
   onUploadCopy: (file: File) => void;
 }
 
-const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({ 
-  originalHtml, 
-  copyHtml,
+// Render DOCX inside a shadow root so app CSS cannot alter Word layout.
+// Keep Word's native page width instead of fitting to the pane.
+const DocxViewer: React.FC<{ data: ArrayBuffer }> = ({ data }) => {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const styleRef = useRef<HTMLDivElement | null>(null);
+  const [isRendering, setIsRendering] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hostRef.current || hostRef.current.shadowRoot) return;
+
+    const shadowRoot = hostRef.current.attachShadow({ mode: 'open' });
+    const baseStyle = document.createElement('style');
+    baseStyle.textContent = `
+      :host {
+        display: block;
+      }
+
+      .docx-shell {
+        min-width: fit-content;
+      }
+
+      .docx-page-wrapper {
+        background: white !important;
+        padding: 0 !important;
+      }
+
+      .docx-page-wrapper > section.docx-page {
+        box-shadow: none !important;
+        margin: 0 auto 16px !important;
+      }
+    `;
+
+    const styleContainer = document.createElement('div');
+    const bodyContainer = document.createElement('div');
+    bodyContainer.className = 'docx-shell';
+
+    shadowRoot.appendChild(baseStyle);
+    shadowRoot.appendChild(styleContainer);
+    shadowRoot.appendChild(bodyContainer);
+
+    styleRef.current = styleContainer;
+    bodyRef.current = bodyContainer;
+  }, []);
+
+  useEffect(() => {
+    if (!bodyRef.current || !styleRef.current || !data) return;
+    let cancelled = false;
+
+    setIsRendering(true);
+    setError(null);
+
+    renderAsync(data, bodyRef.current, styleRef.current, {
+      className: 'docx-page',
+      inWrapper: true,
+      ignoreWidth: false,
+      ignoreHeight: false,
+      ignoreFonts: false,
+      breakPages: true,
+      ignoreLastRenderedPageBreak: false,
+      experimental: false,
+      trimXmlDeclaration: true,
+      useBase64URL: true,
+      renderHeaders: true,
+      renderFooters: true,
+      renderFootnotes: true,
+      renderEndnotes: true,
+    }).then(() => {
+      if (cancelled) return;
+      setIsRendering(false);
+    }).catch((err) => {
+      if (!cancelled) {
+        setError((err as Error).message);
+        setIsRendering(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+
+  return (
+    <div ref={outerRef} className="docx-viewer-host">
+      {isRendering && <div className="docx-viewer-loading">Rendering document...</div>}
+      {error && <div className="docx-viewer-error">Failed to render: {error}</div>}
+      <div ref={hostRef} />
+    </div>
+  );
+};
+
+const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
+  originalDiffHtml,
+  copyDiffHtml,
+  originalDisplay,
+  copyDisplay,
   onUploadOriginal,
   onUploadCopy
 }) => {
   const [zoom, setZoom] = useState(100);
+  const [viewMode, setViewMode] = useState<'original' | 'diff'>('original');
   const originalInputRef = useRef<HTMLInputElement>(null);
   const copyInputRef = useRef<HTMLInputElement>(null);
 
@@ -26,42 +127,61 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
   };
 
   React.useEffect(() => {
-    const handleScrollToDev = (e: any) => {
-      const devId = e.detail.id;
-      const originalEl = document.getElementById(`dev-original-${devId}`);
-      const copyEl = document.getElementById(`dev-copy-${devId}`);
-      
-      const highlightEl = (el: HTMLElement) => {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.style.backgroundColor = '#ffeb3b';
-        el.style.boxShadow = '0 0 0 4px #ffeb3b';
-        setTimeout(() => {
-          el.style.backgroundColor = 'rgba(255, 165, 0, 0.4)';
-          el.style.boxShadow = 'none';
-        }, 2000);
-      };
+    const handleScrollToDev = (event: Event) => {
+      const e = event as CustomEvent<{ id: string }>;
+      setViewMode('diff');
+      setTimeout(() => {
+        const devId = e.detail.id;
+        const originalEl = document.getElementById(`dev-original-${devId}`);
+        const copyEl = document.getElementById(`dev-copy-${devId}`);
 
-      if (originalEl) highlightEl(originalEl);
-      if (copyEl) highlightEl(copyEl);
+        const highlightEl = (el: HTMLElement) => {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.style.backgroundColor = '#ffeb3b';
+          el.style.boxShadow = '0 0 0 4px #ffeb3b';
+          setTimeout(() => {
+            el.style.backgroundColor = 'rgba(255, 165, 0, 0.4)';
+            el.style.boxShadow = 'none';
+          }, 2000);
+        };
+
+        if (originalEl) highlightEl(originalEl);
+        if (copyEl) highlightEl(copyEl);
+      }, 100);
     };
 
     window.addEventListener('scroll-to-dev', handleScrollToDev);
     return () => window.removeEventListener('scroll-to-dev', handleScrollToDev);
   }, []);
 
-  const ToolBar = ({ title, onUploadClick }: { title: string, onUploadClick: () => void }) => (
-    <div className="flex items-center justify-between px-3 py-2 bg-white border-b border-muted-border shadow-sm">
+  const hasBothDocs = originalDisplay && copyDisplay;
+
+  const ToolBar = ({ title, onUploadClick }: { title: string; onUploadClick: () => void }) => (
+    <div className="flex items-center justify-between px-3 py-2 bg-white border-b border-muted-border shadow-sm flex-shrink-0">
       <div className="flex items-center gap-2">
         <span className="font-semibold text-sm text-primary">{title}</span>
         <div className="h-4 w-px bg-muted-border mx-2"></div>
         <button onClick={onUploadClick} className="p-1 hover:bg-muted rounded text-text-muted hover:text-primary transition-colors flex items-center gap-1 text-xs font-medium">
           <Upload size={14} /> Upload
         </button>
-        <button className="p-1 hover:bg-muted rounded text-text-muted hover:text-primary transition-colors"><MousePointer2 size={16} /></button>
-        <button className="p-1 hover:bg-muted rounded text-text-muted hover:text-primary transition-colors"><Type size={16} /></button>
-        <button className="p-1 hover:bg-muted rounded text-text-muted hover:text-primary transition-colors"><FileSearch size={16} /></button>
       </div>
       <div className="flex items-center gap-3 text-sm text-text-muted">
+        {hasBothDocs && (
+          <div className="flex items-center bg-muted rounded-md overflow-hidden border border-muted-border mr-2">
+            <button
+              onClick={() => setViewMode('original')}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'original' ? 'bg-primary text-white' : 'text-text-muted hover:text-primary'}`}
+            >
+              <Eye size={12} /> Original
+            </button>
+            <button
+              onClick={() => setViewMode('diff')}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'diff' ? 'bg-primary text-white' : 'text-text-muted hover:text-primary'}`}
+            >
+              <GitCompare size={12} /> Diff
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-1 bg-muted px-2 py-1 rounded-md">
           <button onClick={() => setZoom(Math.max(50, zoom - 10))} className="hover:text-primary"><ZoomOut size={14} /></button>
           <span className="w-12 text-center font-mono">{zoom}%</span>
@@ -72,39 +192,72 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
     </div>
   );
 
-  const DocumentPane = ({ 
-    title, 
-    htmlContent, 
-    inputRef, 
-    onUpload, 
-    onDrop 
-  }: { 
-    title: string; 
-    htmlContent: string; 
-    inputRef: React.RefObject<HTMLInputElement | null>; 
+  const renderContent = (display: ParseResult | null, diffHtml: string) => {
+    if (!display) return null;
+
+    const showDiff = viewMode === 'diff' && diffHtml;
+
+    if (showDiff) {
+      return (
+        <div className="bg-white p-8 doc-content whitespace-pre-wrap" style={{ minWidth: '100%' }}>
+          <div dangerouslySetInnerHTML={{ __html: diffHtml }} />
+        </div>
+      );
+    }
+
+    if (display.displayType === 'pdf') {
+      return (
+        <iframe
+          src={display.displayContent + '#toolbar=0'}
+          className="w-full h-full border-0 block"
+          title={display.fileName}
+        />
+      );
+    }
+
+    if (display.displayType === 'docx' && display.rawFileData) {
+      return <DocxViewer data={display.rawFileData} />;
+    }
+
+    return (
+      <div className="bg-white p-8 doc-content whitespace-pre-wrap font-mono text-sm" style={{ minWidth: '100%' }}>
+        {display.displayContent}
+      </div>
+    );
+  };
+
+  const DocumentPane = ({
+    title,
+    display,
+    diffHtml,
+    inputRef,
+    onUpload,
+    onDrop,
+  }: {
+    title: string;
+    display: ParseResult | null;
+    diffHtml: string;
+    inputRef: React.RefObject<HTMLInputElement | null>;
     onUpload: (f: File) => void;
     onDrop: (e: React.DragEvent) => void;
   }) => (
-    <div className="flex-1 flex flex-col bg-white rounded-md shadow-sm overflow-hidden border border-muted-border">
+    <div className="flex-1 flex flex-col min-w-0 border border-muted-border rounded-md overflow-hidden bg-white shadow-sm">
       <ToolBar title={title} onUploadClick={() => inputRef.current?.click()} />
-      <input 
-        type="file" 
-        className="hidden" 
+      <input
+        type="file"
+        className="hidden"
         ref={inputRef as React.RefObject<HTMLInputElement>}
-        onChange={(e) => {
-          if (e.target.files && e.target.files.length > 0) {
-            onUpload(e.target.files[0]);
-          }
-        }}
+        onChange={(e) => { if (e.target.files?.[0]) onUpload(e.target.files[0]); }}
         accept=".txt,.pdf,.docx"
       />
-      
-      <div 
-        className="flex-1 overflow-auto bg-muted p-4 md:p-8 flex justify-center relative"
+
+      <div
+        className="flex-1 overflow-auto relative"
+        style={{ background: 'var(--color-muted)' }}
         onDragOver={(e) => e.preventDefault()}
         onDrop={onDrop}
       >
-        {!htmlContent ? (
+        {!display ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-text-muted">
             <Upload size={48} className="mb-4 opacity-50" />
             <p className="font-medium text-lg mb-2">Drag and drop file here</p>
@@ -112,18 +265,7 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
             <p className="text-xs mt-2 opacity-75">Supports TXT, PDF, DOCX</p>
           </div>
         ) : (
-          <div 
-            className="bg-white shadow-md p-8 md:p-12 doc-content origin-top transition-transform whitespace-pre-wrap"
-            style={{ 
-              width: '100%', 
-              maxWidth: '800px', 
-              minHeight: '100%',
-              transform: `scale(${zoom / 100})`,
-              transformOrigin: 'top center'
-            }}
-          >
-            <div dangerouslySetInnerHTML={{ __html: htmlContent }} />
-          </div>
+          renderContent(display, diffHtml)
         )}
       </div>
     </div>
@@ -131,16 +273,18 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
 
   return (
     <div className="flex h-full w-full bg-muted gap-1 overflow-hidden p-1">
-      <DocumentPane 
-        title="Original Document" 
-        htmlContent={originalHtml} 
+      <DocumentPane
+        title="Original Document"
+        display={originalDisplay}
+        diffHtml={originalDiffHtml}
         inputRef={originalInputRef}
         onUpload={onUploadOriginal}
         onDrop={(e) => handleFileDrop(e, onUploadOriginal)}
       />
-      <DocumentPane 
-        title="Copy Document" 
-        htmlContent={copyHtml} 
+      <DocumentPane
+        title="Copy Document"
+        display={copyDisplay}
+        diffHtml={copyDiffHtml}
         inputRef={copyInputRef}
         onUpload={onUploadCopy}
         onDrop={(e) => handleFileDrop(e, onUploadCopy)}

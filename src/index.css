@@ -20,7 +20,6 @@
   }
 }
 
-/* Scrollbar customizations */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -39,7 +38,6 @@
   background: #cbd5e1;
 }
 
-/* Custom highlight class for diffs */
 .diff-highlight {
   @apply bg-accent/30 border-b-2 border-accent transition-colors;
 }
@@ -48,11 +46,29 @@
   @apply bg-accent/50 cursor-pointer;
 }
 
-/* Document content styles */
 .doc-content {
   @apply text-text-main;
 }
 
 .doc-content p {
   @apply mb-4 leading-relaxed;
+}
+
+.docx-viewer-host {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  background: white;
+}
+
+.docx-viewer-loading,
+.docx-viewer-error {
+  padding: 32px;
+  text-align: center;
+  color: #666;
+  font-size: 14px;
+}
+
+.docx-viewer-error {
+  color: #c00;
 }

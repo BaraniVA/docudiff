@@ -9,7 +9,7 @@ import SaveTab from './components/tabs/SaveTab';
 import ExportTab from './components/tabs/ExportTab';
 import ProjectTab from './components/tabs/ProjectTab';
 import { simpleDiff, generateHighlightedHtml, extractDeviations } from './utils/diffEngine';
-import { parseFile } from './utils/fileParser';
+import { parseFile, type ParseResult } from './utils/fileParser';
 import { analyzeChange } from './services/ai';
 
 export interface Deviation {
@@ -28,8 +28,13 @@ function App() {
   const [originalRawText, setOriginalRawText] = useState('');
   const [copyRawText, setCopyRawText] = useState('');
   
-  const [originalHtml, setOriginalHtml] = useState('');
-  const [copyHtml, setCopyHtml] = useState('');
+  // Diff-highlighted HTML (for diff view)
+  const [originalDiffHtml, setOriginalDiffHtml] = useState('');
+  const [copyDiffHtml, setCopyDiffHtml] = useState('');
+  
+  // Native display content (for original view)
+  const [originalDisplay, setOriginalDisplay] = useState<ParseResult | null>(null);
+  const [copyDisplay, setCopyDisplay] = useState<ParseResult | null>(null);
   
   const [deviations, setDeviations] = useState<Deviation[]>([]);
   const [isComparing, setIsComparing] = useState(false);
@@ -42,24 +47,26 @@ function App() {
         const diffs = simpleDiff(originalRawText, copyRawText);
         const newDeviations = extractDeviations(diffs);
         setDeviations(newDeviations);
-        setOriginalHtml(generateHighlightedHtml(diffs, 'original'));
-        setCopyHtml(generateHighlightedHtml(diffs, 'copy'));
+        setOriginalDiffHtml(generateHighlightedHtml(diffs, 'original'));
+        setCopyDiffHtml(generateHighlightedHtml(diffs, 'copy'));
         setIsComparing(false);
       }, 100);
     } else {
-      setOriginalHtml(originalRawText);
-      setCopyHtml(copyRawText);
+      setOriginalDiffHtml('');
+      setCopyDiffHtml('');
       setDeviations([]);
     }
   }, [originalRawText, copyRawText]);
 
   const handleFileUpload = async (file: File, target: 'original' | 'copy') => {
     try {
-      const text = await parseFile(file);
+      const result = await parseFile(file);
       if (target === 'original') {
-        setOriginalRawText(text);
+        setOriginalRawText(result.rawText);
+        setOriginalDisplay(result);
       } else {
-        setCopyRawText(text);
+        setCopyRawText(result.rawText);
+        setCopyDisplay(result);
       }
     } catch (error) {
       console.error('File parsing error:', error);
@@ -99,8 +106,10 @@ function App() {
               </div>
             )}
             <ComparisonCanvas 
-              originalHtml={originalHtml} 
-              copyHtml={copyHtml} 
+              originalDiffHtml={originalDiffHtml} 
+              copyDiffHtml={copyDiffHtml}
+              originalDisplay={originalDisplay}
+              copyDisplay={copyDisplay}
               onUploadOriginal={(f) => handleFileUpload(f, 'original')}
               onUploadCopy={(f) => handleFileUpload(f, 'copy')}
             />

@@ -98,7 +98,11 @@ export function extractDeviations(diffs: DiffResult[]) {
   for (let i = 0; i < diffs.length; i++) {
     if (diffs[i].removed || diffs[i].added) {
       const isWhitespace = /^\s+$/.test(diffs[i].value);
-      if (isWhitespace) continue;
+      // Skip whitespace-only and non-meaningful diffs (symbols, single special chars, etc.)
+      const isNonContent = diffs[i].value.trim().length === 0 
+        || /^[^\w\s]+$/.test(diffs[i].value.trim())  // purely symbolic (no letters/digits)
+        || diffs[i].value.trim().length <= 1;          // single character noise
+      if (isWhitespace || isNonContent) continue;
 
       let type = 'Deviation';
       let originalText = diffs[i].removed ? diffs[i].value : '';
