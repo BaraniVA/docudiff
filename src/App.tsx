@@ -41,21 +41,23 @@ function App() {
   const [aiConfidence, setAiConfidence] = useState(100);
 
   useEffect(() => {
-    if (originalRawText && copyRawText) {
-      setIsComparing(true);
-      setTimeout(() => {
+    const compareTimer = window.setTimeout(() => {
+      if (originalRawText && copyRawText) {
+        setIsComparing(true);
         const diffs = simpleDiff(originalRawText, copyRawText);
         const newDeviations = extractDeviations(diffs);
         setDeviations(newDeviations);
         setOriginalDiffHtml(generateHighlightedHtml(diffs, 'original'));
         setCopyDiffHtml(generateHighlightedHtml(diffs, 'copy'));
         setIsComparing(false);
-      }, 100);
-    } else {
-      setOriginalDiffHtml('');
-      setCopyDiffHtml('');
-      setDeviations([]);
-    }
+      } else {
+        setOriginalDiffHtml('');
+        setCopyDiffHtml('');
+        setDeviations([]);
+      }
+    }, 100);
+
+    return () => window.clearTimeout(compareTimer);
   }, [originalRawText, copyRawText]);
 
   const handleFileUpload = async (file: File, target: 'original' | 'copy') => {

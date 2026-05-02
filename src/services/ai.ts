@@ -41,7 +41,7 @@ export const analyzeChange = async (originalText: string, newText: string, conte
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.0-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
@@ -51,7 +51,7 @@ export const analyzeChange = async (originalText: string, newText: string, conte
     if (response.text) {
       return JSON.parse(response.text) as ChangeAnalysis;
     }
-    
+
     throw new Error('No response from AI');
   } catch (error) {
     console.error('Error analyzing change:', error);

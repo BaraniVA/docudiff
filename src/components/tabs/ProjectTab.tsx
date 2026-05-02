@@ -1,8 +1,18 @@
 import React from 'react';
 import { FolderGit2, Plus, Users, Clock, Filter, MoreHorizontal, FileText, CheckCircle2 } from 'lucide-react';
 
+interface Project {
+  id: string;
+  name: string;
+  type: string;
+  docs: number;
+  team: number;
+  updated: string;
+  status: 'Active' | 'Review' | 'Complete';
+}
+
 const ProjectTab: React.FC = () => {
-  const projects: any[] = [];
+  const projects: Project[] = [];
 
   return (
     <div className="flex-1 flex overflow-hidden bg-muted p-4 gap-4 h-full">

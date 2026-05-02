@@ -14,10 +14,13 @@ export interface ParseResult {
 
 function normalizeTextForDiff(text: string): string {
   return text
+    .normalize('NFKC')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
+    .replace(/(\p{L})-\s*\n\s*(\p{L})/gu, '$1$2')
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/\u00AD/g, '')
     .replace(/[\uE000-\uF8FF]/g, '')
     .replace(/[\u2700-\u27BF]/g, '')
     .replace(/[\u2600-\u26FF]/g, '')
@@ -59,6 +62,19 @@ export async function parseFile(file: File): Promise<ParseResult> {
     case 'docx': {
       const arrayBuffer = await file.arrayBuffer();
       const rawText = await extractTextFromDocx(arrayBuffer);
+      const convertedPdf = await convertDocxToPdfForDisplay(file, arrayBuffer);
+
+      if (convertedPdf) {
+        const blob = new Blob([convertedPdf], { type: 'application/pdf' });
+        const blobUrl = URL.createObjectURL(blob);
+
+        return {
+          rawText: normalizeTextForDiff(rawText),
+          displayContent: blobUrl,
+          displayType: 'pdf',
+          fileName: file.name
+        };
+      }
 
       return {
         rawText: normalizeTextForDiff(rawText),
@@ -74,6 +90,75 @@ export async function parseFile(file: File): Promise<ParseResult> {
   }
 }
 
+async function convertDocxToPdfForDisplay(file: File, arrayBuffer: ArrayBuffer): Promise<ArrayBuffer | null> {
+  try {
+    const response = await fetch('/api/convert/docx-to-pdf', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'X-File-Name': file.name,
+      },
+      body: arrayBuffer.slice(0),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text();
+      console.warn('DOCX to PDF conversion unavailable:', detail);
+      return null;
+    }
+
+    return await response.arrayBuffer();
+  } catch (error) {
+    console.warn('DOCX to PDF conversion unavailable:', error);
+    return null;
+  }
+}
+
+interface PdfTextItem {
+  str: string;
+  transform: number[];
+  width?: number;
+  height?: number;
+  hasEOL?: boolean;
+}
+
+function pdfItemX(item: PdfTextItem): number {
+  return item.transform[4] ?? 0;
+}
+
+function pdfItemY(item: PdfTextItem): number {
+  return item.transform[5] ?? 0;
+}
+
+function pdfFontSize(item: PdfTextItem): number {
+  return Math.abs(item.transform[3] || item.transform[0] || item.height || 10);
+}
+
+function pdfItemEndX(item: PdfTextItem): number {
+  const estimatedWidth = item.width ?? item.str.length * pdfFontSize(item) * 0.45;
+  return pdfItemX(item) + Math.max(0, estimatedWidth);
+}
+
+function hasEdgeWhitespace(previous: string, current: string): boolean {
+  return /\s$/.test(previous) || /^\s/.test(current);
+}
+
+function shouldInsertPdfSpace(previous: PdfTextItem, current: PdfTextItem): boolean {
+  if (hasEdgeWhitespace(previous.str, current.str)) return false;
+
+  const fontSize = Math.max(pdfFontSize(previous), pdfFontSize(current), 1);
+  const gap = pdfItemX(current) - pdfItemEndX(previous);
+
+  return gap > Math.max(fontSize * 0.18, 1.5);
+}
+
+function shouldInsertPdfLineBreak(previous: PdfTextItem, current: PdfTextItem): boolean {
+  if (previous.hasEOL) return true;
+
+  const fontSize = Math.max(pdfFontSize(previous), pdfFontSize(current), 1);
+  return Math.abs(pdfItemY(current) - pdfItemY(previous)) > Math.max(fontSize * 0.55, 4);
+}
+
 async function extractTextFromPdf(data: Uint8Array): Promise<string> {
   const loadingTask = pdfjsLib.getDocument(data);
   const pdf = await loadingTask.promise;
@@ -83,14 +168,21 @@ async function extractTextFromPdf(data: Uint8Array): Promise<string> {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     let pageText = '';
-    let lastY = -1;
+    let previousItem: PdfTextItem | null = null;
 
-    for (const item of textContent.items as Array<{ str: string; transform: number[] }>) {
-      if (lastY !== -1 && Math.abs(item.transform[5] - lastY) > 5) {
-        pageText += '\n';
+    for (const item of textContent.items as PdfTextItem[]) {
+      if (!item.str) continue;
+
+      if (previousItem) {
+        if (shouldInsertPdfLineBreak(previousItem, item)) {
+          pageText = pageText.trimEnd() + '\n';
+        } else if (shouldInsertPdfSpace(previousItem, item)) {
+          pageText += ' ';
+        }
       }
+
       pageText += item.str;
-      lastY = item.transform[5];
+      previousItem = item;
     }
 
     fullText += pageText + '\n\n';

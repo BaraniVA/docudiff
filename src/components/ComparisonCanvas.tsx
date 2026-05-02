@@ -3,6 +3,8 @@ import { ZoomIn, ZoomOut, Maximize, Upload, Eye, GitCompare } from 'lucide-react
 import { renderAsync } from 'docx-preview';
 import type { ParseResult } from '../utils/fileParser';
 
+type ViewMode = 'original' | 'diff';
+
 interface ComparisonCanvasProps {
   originalDiffHtml: string;
   copyDiffHtml: string;
@@ -94,7 +96,6 @@ const DocxViewer: React.FC<{ data: ArrayBuffer }> = ({ data }) => {
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
   return (
@@ -106,6 +107,121 @@ const DocxViewer: React.FC<{ data: ArrayBuffer }> = ({ data }) => {
   );
 };
 
+const CanvasToolBar = ({
+  title,
+  onUploadClick,
+  showViewToggle,
+  viewMode,
+  onViewModeChange,
+  zoom,
+  onZoomChange,
+}: {
+  title: string;
+  onUploadClick: () => void;
+  showViewToggle: boolean;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+}) => (
+  <div className="flex items-center justify-between px-3 py-2 bg-white border-b border-muted-border shadow-sm flex-shrink-0">
+    <div className="flex items-center gap-2">
+      <span className="font-semibold text-sm text-primary">{title}</span>
+      <div className="h-4 w-px bg-muted-border mx-2"></div>
+      <button onClick={onUploadClick} className="p-1 hover:bg-muted rounded text-text-muted hover:text-primary transition-colors flex items-center gap-1 text-xs font-medium">
+        <Upload size={14} /> Upload
+      </button>
+    </div>
+    <div className="flex items-center gap-3 text-sm text-text-muted">
+      {showViewToggle && (
+        <div className="flex items-center bg-muted rounded-md overflow-hidden border border-muted-border mr-2">
+          <button
+            onClick={() => onViewModeChange('original')}
+            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'original' ? 'bg-primary text-white' : 'text-text-muted hover:text-primary'}`}
+          >
+            <Eye size={12} /> Original
+          </button>
+          <button
+            onClick={() => onViewModeChange('diff')}
+            className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'diff' ? 'bg-primary text-white' : 'text-text-muted hover:text-primary'}`}
+          >
+            <GitCompare size={12} /> Diff
+          </button>
+        </div>
+      )}
+      <div className="flex items-center gap-1 bg-muted px-2 py-1 rounded-md">
+        <button onClick={() => onZoomChange(Math.max(50, zoom - 10))} className="hover:text-primary"><ZoomOut size={14} /></button>
+        <span className="w-12 text-center font-mono">{zoom}%</span>
+        <button onClick={() => onZoomChange(Math.min(200, zoom + 10))} className="hover:text-primary"><ZoomIn size={14} /></button>
+      </div>
+      <button className="p-1 hover:bg-muted rounded transition-colors hover:text-primary"><Maximize size={16} /></button>
+    </div>
+  </div>
+);
+
+const DocumentPane = ({
+  title,
+  display,
+  inputRef,
+  onUpload,
+  onDrop,
+  showViewToggle,
+  viewMode,
+  onViewModeChange,
+  zoom,
+  onZoomChange,
+  children,
+}: {
+  title: string;
+  display: ParseResult | null;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onUpload: (f: File) => void;
+  onDrop: (e: React.DragEvent) => void;
+  showViewToggle: boolean;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+  children: React.ReactNode;
+}) => (
+  <div className="flex-1 flex flex-col min-w-0 border border-muted-border rounded-md overflow-hidden bg-white shadow-sm">
+    <CanvasToolBar
+      title={title}
+      onUploadClick={() => inputRef.current?.click()}
+      showViewToggle={showViewToggle}
+      viewMode={viewMode}
+      onViewModeChange={onViewModeChange}
+      zoom={zoom}
+      onZoomChange={onZoomChange}
+    />
+    <input
+      type="file"
+      className="hidden"
+      ref={inputRef as React.RefObject<HTMLInputElement>}
+      onChange={(e) => { if (e.target.files?.[0]) onUpload(e.target.files[0]); }}
+      accept=".txt,.pdf,.docx"
+    />
+
+    <div
+      className="flex-1 overflow-auto relative"
+      style={{ background: 'var(--color-muted)' }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+    >
+      {!display ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-text-muted">
+          <Upload size={48} className="mb-4 opacity-50" />
+          <p className="font-medium text-lg mb-2">Drag and drop file here</p>
+          <p className="text-sm">or click Upload in the toolbar</p>
+          <p className="text-xs mt-2 opacity-75">Supports TXT, PDF, DOCX</p>
+        </div>
+      ) : (
+        children
+      )}
+    </div>
+  </div>
+);
+
 const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
   originalDiffHtml,
   copyDiffHtml,
@@ -115,7 +231,7 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
   onUploadCopy
 }) => {
   const [zoom, setZoom] = useState(100);
-  const [viewMode, setViewMode] = useState<'original' | 'diff'>('original');
+  const [viewMode, setViewMode] = useState<ViewMode>('original');
   const originalInputRef = useRef<HTMLInputElement>(null);
   const copyInputRef = useRef<HTMLInputElement>(null);
 
@@ -156,42 +272,6 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
 
   const hasBothDocs = originalDisplay && copyDisplay;
 
-  const ToolBar = ({ title, onUploadClick }: { title: string; onUploadClick: () => void }) => (
-    <div className="flex items-center justify-between px-3 py-2 bg-white border-b border-muted-border shadow-sm flex-shrink-0">
-      <div className="flex items-center gap-2">
-        <span className="font-semibold text-sm text-primary">{title}</span>
-        <div className="h-4 w-px bg-muted-border mx-2"></div>
-        <button onClick={onUploadClick} className="p-1 hover:bg-muted rounded text-text-muted hover:text-primary transition-colors flex items-center gap-1 text-xs font-medium">
-          <Upload size={14} /> Upload
-        </button>
-      </div>
-      <div className="flex items-center gap-3 text-sm text-text-muted">
-        {hasBothDocs && (
-          <div className="flex items-center bg-muted rounded-md overflow-hidden border border-muted-border mr-2">
-            <button
-              onClick={() => setViewMode('original')}
-              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'original' ? 'bg-primary text-white' : 'text-text-muted hover:text-primary'}`}
-            >
-              <Eye size={12} /> Original
-            </button>
-            <button
-              onClick={() => setViewMode('diff')}
-              className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${viewMode === 'diff' ? 'bg-primary text-white' : 'text-text-muted hover:text-primary'}`}
-            >
-              <GitCompare size={12} /> Diff
-            </button>
-          </div>
-        )}
-        <div className="flex items-center gap-1 bg-muted px-2 py-1 rounded-md">
-          <button onClick={() => setZoom(Math.max(50, zoom - 10))} className="hover:text-primary"><ZoomOut size={14} /></button>
-          <span className="w-12 text-center font-mono">{zoom}%</span>
-          <button onClick={() => setZoom(Math.min(200, zoom + 10))} className="hover:text-primary"><ZoomIn size={14} /></button>
-        </div>
-        <button className="p-1 hover:bg-muted rounded transition-colors hover:text-primary"><Maximize size={16} /></button>
-      </div>
-    </div>
-  );
-
   const renderContent = (display: ParseResult | null, diffHtml: string) => {
     if (!display) return null;
 
@@ -226,69 +306,36 @@ const ComparisonCanvas: React.FC<ComparisonCanvasProps> = ({
     );
   };
 
-  const DocumentPane = ({
-    title,
-    display,
-    diffHtml,
-    inputRef,
-    onUpload,
-    onDrop,
-  }: {
-    title: string;
-    display: ParseResult | null;
-    diffHtml: string;
-    inputRef: React.RefObject<HTMLInputElement | null>;
-    onUpload: (f: File) => void;
-    onDrop: (e: React.DragEvent) => void;
-  }) => (
-    <div className="flex-1 flex flex-col min-w-0 border border-muted-border rounded-md overflow-hidden bg-white shadow-sm">
-      <ToolBar title={title} onUploadClick={() => inputRef.current?.click()} />
-      <input
-        type="file"
-        className="hidden"
-        ref={inputRef as React.RefObject<HTMLInputElement>}
-        onChange={(e) => { if (e.target.files?.[0]) onUpload(e.target.files[0]); }}
-        accept=".txt,.pdf,.docx"
-      />
-
-      <div
-        className="flex-1 overflow-auto relative"
-        style={{ background: 'var(--color-muted)' }}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={onDrop}
-      >
-        {!display ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center text-text-muted">
-            <Upload size={48} className="mb-4 opacity-50" />
-            <p className="font-medium text-lg mb-2">Drag and drop file here</p>
-            <p className="text-sm">or click Upload in the toolbar</p>
-            <p className="text-xs mt-2 opacity-75">Supports TXT, PDF, DOCX</p>
-          </div>
-        ) : (
-          renderContent(display, diffHtml)
-        )}
-      </div>
-    </div>
-  );
-
   return (
     <div className="flex h-full w-full bg-muted gap-1 overflow-hidden p-1">
       <DocumentPane
         title="Original Document"
         display={originalDisplay}
-        diffHtml={originalDiffHtml}
         inputRef={originalInputRef}
         onUpload={onUploadOriginal}
         onDrop={(e) => handleFileDrop(e, onUploadOriginal)}
-      />
+        showViewToggle={Boolean(hasBothDocs)}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        zoom={zoom}
+        onZoomChange={setZoom}
+      >
+        {renderContent(originalDisplay, originalDiffHtml)}
+      </DocumentPane>
       <DocumentPane
         title="Copy Document"
         display={copyDisplay}
-        diffHtml={copyDiffHtml}
         inputRef={copyInputRef}
         onUpload={onUploadCopy}
         onDrop={(e) => handleFileDrop(e, onUploadCopy)}
-      />
+        showViewToggle={Boolean(hasBothDocs)}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
+        zoom={zoom}
+        onZoomChange={setZoom}
+      >
+        {renderContent(copyDisplay, copyDiffHtml)}
+      </DocumentPane>
     </div>
   );
 };
