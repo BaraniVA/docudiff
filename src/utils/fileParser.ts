@@ -1,35 +1,45 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import JSZip from 'jszip';
+import type { StyleInfo } from './diffEngine';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
+export interface StyleRun {
+  text: string;
+  style: StyleInfo;
+  page: number;
+}
+
 export interface ParseResult {
+  /** Raw text extracted from the document – NEVER normalised beyond line endings. */
   rawText: string;
+  /** Content for the native-view pane (blob URL for PDF, raw text for TXT). */
   displayContent: string;
   displayType: 'pdf' | 'docx' | 'text';
   fileName: string;
   rawFileData?: ArrayBuffer;
+  sourceFileData?: ArrayBuffer;
+  sourceFileBytes?: Uint8Array;
+  sourceFileBlob?: Blob;
+  /** Character indices where page breaks occur (for page tracking in diffs). */
+  pageBreaks: number[];
+  /** Per-run style information extracted from the source document. */
+  styleRuns: StyleRun[];
+  /** Source format – PDF style data is unreliable for font family/weight/style */
+  sourceFormat: 'pdf' | 'docx' | 'txt';
 }
 
-function normalizeTextForDiff(text: string): string {
-  return text
-    .normalize('NFKC')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/(\p{L})-\s*\n\s*(\p{L})/gu, '$1$2')
-    // eslint-disable-next-line no-control-regex
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
-    .replace(/\u00AD/g, '')
-    .replace(/[\uE000-\uF8FF]/g, '')
-    .replace(/[\u2700-\u27BF]/g, '')
-    .replace(/[\u2600-\u26FF]/g, '')
-    .replace(/[\u2300-\u23FF]/g, '')
-    .replace(/[\u2190-\u21FF]/g, '')
-    .replace(/[\uFE00-\uFE0F]/g, '')
-    .replace(/[\u200B-\u200F\u2028-\u202F\uFEFF]/g, '')
-    .replace(/\u00A0/g, ' ');
+// ── Minimal line-ending normalisation ────────────────────────────────────────
+// We ONLY normalise \r\n → \n.  Nothing else is touched.  The diff engine's
+// comparison-key logic handles the rest (soft hyphens, typographic quotes, etc.)
+// so that the display value remains faithful to the source.
+
+function normaliseLineEndings(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
+
+// ── Public entry point ───────────────────────────────────────────────────────
 
 export async function parseFile(file: File): Promise<ParseResult> {
   const extension = file.name.split('.').pop()?.toLowerCase();
@@ -38,30 +48,47 @@ export async function parseFile(file: File): Promise<ParseResult> {
     case 'txt': {
       const text = await file.text();
       return {
-        rawText: text,
+        rawText: normaliseLineEndings(text),
         displayContent: text,
         displayType: 'text',
-        fileName: file.name
+        fileName: file.name,
+        sourceFileData: await file.arrayBuffer(),
+        sourceFileBytes: new TextEncoder().encode(text),
+        sourceFileBlob: file.slice(0, file.size, file.type || 'text/plain'),
+        pageBreaks: [],
+        styleRuns: [],
+        sourceFormat: 'txt',
       };
     }
 
     case 'pdf': {
       const arrayBuffer = await file.arrayBuffer();
-      const blob = new Blob([arrayBuffer], { type: 'application/pdf' });
+      const sourceBytes = new Uint8Array(arrayBuffer.slice(0));
+      const parserBytes = new Uint8Array(arrayBuffer.slice(0));
+      const displayBytes = new Uint8Array(arrayBuffer.slice(0));
+      const blob = new Blob([displayBytes], { type: 'application/pdf' });
       const blobUrl = URL.createObjectURL(blob);
-      const rawText = await extractTextFromPdf(new Uint8Array(arrayBuffer));
+      const extraction = await extractFromPdf(parserBytes);
 
       return {
-        rawText: normalizeTextForDiff(rawText),
+        rawText: normaliseLineEndings(extraction.text),
         displayContent: blobUrl,
         displayType: 'pdf',
-        fileName: file.name
+        fileName: file.name,
+        rawFileData: displayBytes.buffer,
+        sourceFileData: sourceBytes.buffer.slice(0),
+        sourceFileBytes: sourceBytes,
+        sourceFileBlob: file.slice(0, file.size, file.type || 'application/pdf'),
+        pageBreaks: extraction.pageBreaks,
+        styleRuns: extraction.styleRuns,
+        sourceFormat: 'pdf',
       };
     }
 
     case 'docx': {
       const arrayBuffer = await file.arrayBuffer();
-      const rawText = await extractTextFromDocx(arrayBuffer);
+      const sourceBytes = new Uint8Array(arrayBuffer.slice(0));
+      const extraction = await extractFromDocx(arrayBuffer);
       const convertedPdf = await convertDocxToPdfForDisplay(file, arrayBuffer);
 
       if (convertedPdf) {
@@ -69,19 +96,32 @@ export async function parseFile(file: File): Promise<ParseResult> {
         const blobUrl = URL.createObjectURL(blob);
 
         return {
-          rawText: normalizeTextForDiff(rawText),
+          rawText: normaliseLineEndings(extraction.text),
           displayContent: blobUrl,
           displayType: 'pdf',
-          fileName: file.name
+          fileName: file.name,
+          rawFileData: convertedPdf,
+          sourceFileData: sourceBytes.buffer.slice(0),
+          sourceFileBytes: sourceBytes,
+          sourceFileBlob: file.slice(0, file.size, file.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+          pageBreaks: extraction.pageBreaks,
+          styleRuns: extraction.styleRuns,
+          sourceFormat: 'docx',
         };
       }
 
       return {
-        rawText: normalizeTextForDiff(rawText),
+        rawText: normaliseLineEndings(extraction.text),
         displayContent: '',
         displayType: 'docx',
         fileName: file.name,
-        rawFileData: arrayBuffer
+        rawFileData: arrayBuffer,
+        sourceFileData: sourceBytes.buffer.slice(0),
+        sourceFileBytes: sourceBytes,
+        sourceFileBlob: file.slice(0, file.size, file.type || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+        pageBreaks: extraction.pageBreaks,
+        styleRuns: extraction.styleRuns,
+        sourceFormat: 'docx',
       };
     }
 
@@ -89,6 +129,8 @@ export async function parseFile(file: File): Promise<ParseResult> {
       throw new Error(`Unsupported file type: ${extension}`);
   }
 }
+
+// ── DOCX → PDF server-side conversion (unchanged) ───────────────────────────
 
 async function convertDocxToPdfForDisplay(file: File, arrayBuffer: ArrayBuffer): Promise<ArrayBuffer | null> {
   try {
@@ -114,12 +156,15 @@ async function convertDocxToPdfForDisplay(file: File, arrayBuffer: ArrayBuffer):
   }
 }
 
+// ── PDF text + style extraction ──────────────────────────────────────────────
+
 interface PdfTextItem {
   str: string;
   transform: number[];
   width?: number;
   height?: number;
   hasEOL?: boolean;
+  fontName?: string;
 }
 
 function pdfItemX(item: PdfTextItem): number {
@@ -159,50 +204,274 @@ function shouldInsertPdfLineBreak(previous: PdfTextItem, current: PdfTextItem): 
   return Math.abs(pdfItemY(current) - pdfItemY(previous)) > Math.max(fontSize * 0.55, 4);
 }
 
-async function extractTextFromPdf(data: Uint8Array): Promise<string> {
+function sortPdfTextItems(items: PdfTextItem[]): PdfTextItem[] {
+  return items
+    .filter((item) => Boolean(item.str))
+    .sort((a, b) => {
+      const fontSize = Math.max(pdfFontSize(a), pdfFontSize(b), 1);
+      const yDelta = pdfItemY(b) - pdfItemY(a);
+
+      if (Math.abs(yDelta) > Math.max(fontSize * 0.6, 4)) {
+        return yDelta;
+      }
+
+      return pdfItemX(a) - pdfItemX(b);
+    });
+}
+
+// NOTE: PDF font names (e.g. "g_d0_f3", "BCDEEE+TimesNewRomanPSMT") are
+// opaque subset identifiers.  Different PDF generators encode the SAME font
+// completely differently, so deriving font-family/weight/style from the name
+// is inherently unreliable and produces massive false positives.
+//
+// The ONLY reliable style property from a PDF is fontSize, which comes from
+// the text transform matrix – not the font name.
+
+async function extractFromPdf(data: Uint8Array): Promise<{
+  text: string;
+  pageBreaks: number[];
+  styleRuns: StyleRun[];
+}> {
   const loadingTask = pdfjsLib.getDocument(data);
   const pdf = await loadingTask.promise;
 
   let fullText = '';
+  const pageBreaks: number[] = [];
+  const styleRuns: StyleRun[] = [];
+
   for (let i = 1; i <= pdf.numPages; i++) {
+    if (i > 1) {
+      pageBreaks.push(fullText.length);
+    }
+
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
-    let pageText = '';
     let previousItem: PdfTextItem | null = null;
+    const items = sortPdfTextItems(textContent.items as PdfTextItem[]);
 
-    for (const item of textContent.items as PdfTextItem[]) {
-      if (!item.str) continue;
-
+    for (const item of items) {
       if (previousItem) {
         if (shouldInsertPdfLineBreak(previousItem, item)) {
-          pageText = pageText.trimEnd() + '\n';
+          fullText = fullText.trimEnd() + '\n';
         } else if (shouldInsertPdfSpace(previousItem, item)) {
-          pageText += ' ';
+          fullText += ' ';
         }
       }
 
-      pageText += item.str;
+      // Only extract fontSize – it's the only reliable metric from PDF
+      styleRuns.push({
+        text: item.str,
+        style: {
+          fontSize: pdfFontSize(item),
+        },
+        page: i,
+      });
+
+      fullText += item.str;
       previousItem = item;
     }
 
-    fullText += pageText + '\n\n';
+    fullText += '\n\n';
   }
 
-  return fullText;
+  return { text: fullText, pageBreaks, styleRuns };
 }
 
-async function extractTextFromDocx(arrayBuffer: ArrayBuffer): Promise<string> {
+// ── DOCX text + style extraction ─────────────────────────────────────────────
+
+interface DocxExtraction {
+  text: string;
+  pageBreaks: number[];
+  styleRuns: StyleRun[];
+}
+
+async function extractFromDocx(arrayBuffer: ArrayBuffer): Promise<DocxExtraction> {
   const zip = await JSZip.loadAsync(arrayBuffer);
-  const segments: string[] = [];
 
-  await appendXmlText(zip, 'word/document.xml', segments);
-  await appendMatchingXmlText(zip, /^word\/header\d+\.xml$/, segments);
-  await appendMatchingXmlText(zip, /^word\/footer\d+\.xml$/, segments);
+  // Try to read styles.xml to resolve style IDs → properties
+  const styleMap = await buildDocxStyleMap(zip);
 
-  return collapseDocxText(segments.join(''));
+  const ctx: DocxWalkContext = {
+    segments: [],
+    styleRuns: [],
+    pageBreaks: [],
+    currentPage: 1,
+    charCount: 0,
+    styleMap,
+  };
+
+  await appendXmlBody(zip, 'word/document.xml', ctx);
+  await appendMatchingXml(zip, /^word\/header\d+\.xml$/, ctx);
+  await appendMatchingXml(zip, /^word\/footer\d+\.xml$/, ctx);
+
+  const rawText = collapseDocxText(ctx.segments.join(''));
+
+  return {
+    text: rawText,
+    pageBreaks: ctx.pageBreaks,
+    styleRuns: ctx.styleRuns,
+  };
 }
 
-async function appendXmlText(zip: JSZip, path: string, segments: string[]): Promise<void> {
+// Map from style ID → style properties
+interface DocxStyleProps {
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: string;
+  fontStyle?: string;
+  color?: string;
+  textDecoration?: string;
+}
+
+async function buildDocxStyleMap(zip: JSZip): Promise<Map<string, DocxStyleProps>> {
+  const map = new Map<string, DocxStyleProps>();
+  const file = zip.file('word/styles.xml');
+  if (!file) return map;
+
+  try {
+    const xml = await file.async('string');
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    const styles = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'style');
+
+    for (let i = 0; i < styles.length; i++) {
+      const style = styles[i];
+      const styleId = style.getAttribute('w:styleId');
+      if (!styleId) continue;
+
+      const rPr = style.getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'rPr')[0];
+      if (!rPr) continue;
+
+      map.set(styleId, extractRunProps(rPr));
+    }
+  } catch {
+    // If styles.xml is malformed, proceed without styles
+  }
+
+  return map;
+}
+
+function extractRunProps(rPr: Element): DocxStyleProps {
+  const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+  const props: DocxStyleProps = {};
+
+  // Font family
+  const rFonts = rPr.getElementsByTagNameNS(ns, 'rFonts')[0];
+  if (rFonts) {
+    props.fontFamily = rFonts.getAttribute('w:ascii')
+      ?? rFonts.getAttribute('w:hAnsi')
+      ?? rFonts.getAttribute('w:cs')
+      ?? undefined;
+  }
+
+  // Font size (in half-points → convert to points)
+  const sz = rPr.getElementsByTagNameNS(ns, 'sz')[0];
+  if (sz) {
+    const val = sz.getAttribute('w:val');
+    if (val) props.fontSize = parseInt(val) / 2;
+  }
+
+  // Bold
+  const b = rPr.getElementsByTagNameNS(ns, 'b')[0];
+  if (b) {
+    const val = b.getAttribute('w:val');
+    props.fontWeight = (val === '0' || val === 'false') ? 'normal' : 'bold';
+  }
+
+  // Italic
+  const iEl = rPr.getElementsByTagNameNS(ns, 'i')[0];
+  if (iEl) {
+    const val = iEl.getAttribute('w:val');
+    props.fontStyle = (val === '0' || val === 'false') ? 'normal' : 'italic';
+  }
+
+  // Color
+  const color = rPr.getElementsByTagNameNS(ns, 'color')[0];
+  if (color) {
+    const val = color.getAttribute('w:val');
+    if (val && val !== 'auto') props.color = `#${val}`;
+  }
+
+  // Underline
+  const u = rPr.getElementsByTagNameNS(ns, 'u')[0];
+  if (u) {
+    const val = u.getAttribute('w:val');
+    if (val && val !== 'none') props.textDecoration = 'underline';
+  }
+
+  // Strikethrough
+  const strike = rPr.getElementsByTagNameNS(ns, 'strike')[0];
+  if (strike) {
+    const val = strike.getAttribute('w:val');
+    if (val !== '0' && val !== 'false') {
+      props.textDecoration = props.textDecoration ? `${props.textDecoration} line-through` : 'line-through';
+    }
+  }
+
+  return props;
+}
+
+interface DocxWalkContext {
+  segments: string[];
+  styleRuns: StyleRun[];
+  pageBreaks: number[];
+  currentPage: number;
+  charCount: number;
+  styleMap: Map<string, DocxStyleProps>;
+}
+
+function appendDocxTextSegment(ctx: DocxWalkContext, text: string, style: DocxStyleProps): void {
+  if (!text) return;
+
+  ctx.segments.push(text);
+  ctx.styleRuns.push({
+    text,
+    style: {
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      fontStyle: style.fontStyle,
+      color: style.color,
+      textDecoration: style.textDecoration,
+    },
+    page: ctx.currentPage,
+  });
+  ctx.charCount += text.length;
+}
+
+function docxSymbolToUnicode(font: string, charHex: string): string {
+  const codePoint = parseInt(charHex, 16);
+  if (!Number.isFinite(codePoint)) return '';
+
+  const normalizedFont = font.toLowerCase();
+  const symbolKey = `${normalizedFont}:${charHex.toUpperCase().padStart(4, '0')}`;
+  const symbolMap: Record<string, string> = {
+    'wingdings:0028': '\u260E',
+    'wingdings:F028': '\u260E',
+    'wingdings:002A': '\u2709',
+    'wingdings:F02A': '\u2709',
+    'wingdings:006C': '\u2022',
+    'wingdings:F06C': '\u2022',
+    'wingdings:00FC': '\u2713',
+    'wingdings:F0FC': '\u2713',
+    'fontawesome:F095': '\u260E',
+    'font awesome 5 free:F095': '\u260E',
+    'font awesome 6 free:F095': '\u260E',
+    'fontawesome:F0E0': '\u2709',
+    'font awesome 5 free:F0E0': '\u2709',
+    'font awesome 6 free:F0E0': '\u2709',
+  };
+
+  const mapped = symbolMap[symbolKey];
+  if (mapped) return mapped;
+
+  try {
+    return String.fromCodePoint(codePoint);
+  } catch {
+    return '';
+  }
+}
+
+async function appendXmlBody(zip: JSZip, path: string, ctx: DocxWalkContext): Promise<void> {
   const file = zip.file(path);
   if (!file) return;
 
@@ -211,59 +480,152 @@ async function appendXmlText(zip: JSZip, path: string, segments: string[]): Prom
   const body = doc.documentElement;
   if (!body) return;
 
-  walkDocxNode(body, segments);
+  walkDocxNode(body, ctx, {});
 }
 
-async function appendMatchingXmlText(zip: JSZip, pattern: RegExp, segments: string[]): Promise<void> {
+async function appendMatchingXml(zip: JSZip, pattern: RegExp, ctx: DocxWalkContext): Promise<void> {
   const matches = Object.keys(zip.files)
-    .filter((path) => pattern.test(path))
+    .filter((p) => pattern.test(p))
     .sort();
 
-  for (const path of matches) {
-    await appendXmlText(zip, path, segments);
+  for (const p of matches) {
+    await appendXmlBody(zip, p, ctx);
   }
 }
 
-function walkDocxNode(node: Node, segments: string[]): void {
+function walkDocxNode(node: Node, ctx: DocxWalkContext, inheritedStyle: DocxStyleProps): void {
   if (node.nodeType !== Node.ELEMENT_NODE) return;
 
   const element = node as Element;
   const name = element.localName;
+  const ns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
+  // Page break detection
+  if (name === 'lastRenderedPageBreak' || name === 'pageBreakBefore') {
+    ctx.pageBreaks.push(ctx.charCount);
+    ctx.currentPage++;
+  }
+
+  if (name === 'br') {
+    const type = element.getAttribute('w:type');
+    if (type === 'page') {
+      ctx.pageBreaks.push(ctx.charCount);
+      ctx.currentPage++;
+    }
+    ctx.segments.push('\n');
+    ctx.charCount += 1;
+    return;
+  }
+
+  if (name === 'cr') {
+    ctx.segments.push('\n');
+    ctx.charCount += 1;
+    return;
+  }
+
+  // Text run (<w:r>)
+  if (name === 'r') {
+    // Extract run-level style properties
+    const rPr = element.getElementsByTagNameNS(ns, 'rPr')[0];
+    let runStyle: DocxStyleProps = { ...inheritedStyle };
+
+    if (rPr) {
+      const extracted = extractRunProps(rPr);
+      runStyle = { ...runStyle, ...extracted };
+    }
+
+    // Check for style reference
+    const rStyle = rPr?.getElementsByTagNameNS(ns, 'rStyle')[0];
+    if (rStyle) {
+      const styleId = rStyle.getAttribute('w:val');
+      if (styleId && ctx.styleMap.has(styleId)) {
+        const mapped = ctx.styleMap.get(styleId)!;
+        runStyle = { ...mapped, ...runStyle };
+      }
+    }
+
+    // Now walk children with this style
+    element.childNodes.forEach((child) => walkDocxNode(child, ctx, runStyle));
+    return;
+  }
+
+  // Paragraph (<w:p>)
+  if (name === 'p') {
+    // Check paragraph style for inherited run properties
+    const pPr = element.getElementsByTagNameNS(ns, 'pPr')[0];
+    let paraStyle: DocxStyleProps = { ...inheritedStyle };
+
+    if (pPr) {
+      // Check for paragraph-level run properties
+      const rPr = pPr.getElementsByTagNameNS(ns, 'rPr')[0];
+      if (rPr) {
+        const extracted = extractRunProps(rPr);
+        paraStyle = { ...paraStyle, ...extracted };
+      }
+
+      // Check for style reference
+      const pStyle = pPr.getElementsByTagNameNS(ns, 'pStyle')[0];
+      if (pStyle) {
+        const styleId = pStyle.getAttribute('w:val');
+        if (styleId && ctx.styleMap.has(styleId)) {
+          const mapped = ctx.styleMap.get(styleId)!;
+          paraStyle = { ...mapped, ...paraStyle };
+        }
+      }
+
+      // Check for page break before
+      const pageBreakBefore = pPr.getElementsByTagNameNS(ns, 'pageBreakBefore')[0];
+      if (pageBreakBefore) {
+        const val = pageBreakBefore.getAttribute('w:val');
+        if (val !== '0' && val !== 'false') {
+          ctx.pageBreaks.push(ctx.charCount);
+          ctx.currentPage++;
+        }
+      }
+    }
+
+    element.childNodes.forEach((child) => walkDocxNode(child, ctx, paraStyle));
+    ctx.segments.push('\n');
+    ctx.charCount += 1;
+    return;
+  }
+
+  // Text node (<w:t>)
   if (name === 't') {
-    segments.push(element.textContent ?? '');
+    const text = element.textContent ?? '';
+    appendDocxTextSegment(ctx, text, inheritedStyle);
+    return;
+  }
+
+  if (name === 'sym') {
+    const font = element.getAttribute('w:font') ?? element.getAttribute('font') ?? inheritedStyle.fontFamily ?? '';
+    const charHex = element.getAttribute('w:char') ?? element.getAttribute('char') ?? '';
+    const symbol = docxSymbolToUnicode(font, charHex);
+    appendDocxTextSegment(ctx, symbol, { ...inheritedStyle, fontFamily: inheritedStyle.fontFamily ?? font });
     return;
   }
 
   if (name === 'tab') {
-    segments.push('\t');
-    return;
-  }
-
-  if (name === 'br' || name === 'cr') {
-    segments.push('\n');
+    ctx.segments.push('\t');
+    ctx.charCount += 1;
     return;
   }
 
   if (name === 'tc') {
-    element.childNodes.forEach((child) => walkDocxNode(child, segments));
-    segments.push('\t');
+    element.childNodes.forEach((child) => walkDocxNode(child, ctx, inheritedStyle));
+    ctx.segments.push('\t');
+    ctx.charCount += 1;
     return;
   }
 
   if (name === 'tr') {
-    element.childNodes.forEach((child) => walkDocxNode(child, segments));
-    segments.push('\n');
+    element.childNodes.forEach((child) => walkDocxNode(child, ctx, inheritedStyle));
+    ctx.segments.push('\n');
+    ctx.charCount += 1;
     return;
   }
 
-  if (name === 'p') {
-    element.childNodes.forEach((child) => walkDocxNode(child, segments));
-    segments.push('\n');
-    return;
-  }
-
-  element.childNodes.forEach((child) => walkDocxNode(child, segments));
+  element.childNodes.forEach((child) => walkDocxNode(child, ctx, inheritedStyle));
 }
 
 function collapseDocxText(text: string): string {

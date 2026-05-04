@@ -14,6 +14,12 @@ export interface ChangeAnalysis {
   isRisky: boolean;
 }
 
+export interface ReviewDecision {
+  status: 'accepted' | 'rejected';
+  confidenceScore: number;
+  explanation: string;
+}
+
 export const analyzeChange = async (originalText: string, newText: string, context: string): Promise<ChangeAnalysis> => {
   if (!apiKey) {
     return {
@@ -90,5 +96,67 @@ export const generateDocumentSummary = async (originalContent: string, newConten
   } catch (error) {
     console.error('Error generating summary:', error);
     return 'Failed to generate summary due to an error.';
+  }
+};
+
+export const reviewChangeDecision = async (
+  originalText: string,
+  newText: string,
+  changeType: string,
+): Promise<ReviewDecision> => {
+  if (!apiKey) {
+    return {
+      status: 'rejected',
+      confidenceScore: 0,
+      explanation: 'API Key not configured. Add VITE_GEMINI_API_KEY to your .env file before using AI review.',
+    };
+  }
+
+  try {
+    const prompt = `
+      You are a strict pharmaceutical/legal document reviewer.
+      Decide whether the change in the COPY document should be accepted or rejected.
+
+      Rules:
+      - Reject changes that alter meaning, numbers, dates, names, obligations, warnings, dosage, legal/regulatory language, or compliance-sensitive wording.
+      - Reject unexplained deletions from the original.
+      - Accept only harmless copy edits such as clear spelling, punctuation, capitalization, or whitespace fixes that do not change meaning.
+      - When uncertain, reject.
+
+      Change Type: "${changeType}"
+      Original Text: "${originalText}"
+      Copy Text: "${newText}"
+
+      Return JSON with:
+      - "status": "accepted" or "rejected"
+      - "confidenceScore": number from 0 to 100
+      - "explanation": short reason for the decision
+    `;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    if (response.text) {
+      const parsed = JSON.parse(response.text) as ReviewDecision;
+      return {
+        status: parsed.status === 'accepted' ? 'accepted' : 'rejected',
+        confidenceScore: Number(parsed.confidenceScore) || 0,
+        explanation: parsed.explanation || 'AI review completed.',
+      };
+    }
+
+    throw new Error('No response from AI');
+  } catch (error) {
+    console.error('Error reviewing change:', error);
+    return {
+      status: 'rejected',
+      confidenceScore: 0,
+      explanation: 'AI review failed, so this change was rejected for safety.',
+    };
   }
 };

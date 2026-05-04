@@ -1,7 +1,27 @@
 import React, { useState } from 'react';
-import { Download, Mail, Link as LinkIcon, Settings, LayoutTemplate, Share2, FileBarChart, FileText } from 'lucide-react';
+import { Download, Mail, Link as LinkIcon, Settings, LayoutTemplate, Share2, FileBarChart, FileText, WandSparkles } from 'lucide-react';
 
-const ExportTab: React.FC = () => {
+interface ExportTabProps {
+  canFixAndDownload: boolean;
+  originalFileName?: string;
+  copyFileName?: string;
+  fixedDownloadUrl?: string;
+  fixedDownloadFileName?: string;
+  deviationCount: number;
+  onFixAndDownload: () => void;
+  onDownloadDifferences: () => void;
+}
+
+const ExportTab: React.FC<ExportTabProps> = ({
+  canFixAndDownload,
+  originalFileName,
+  copyFileName,
+  fixedDownloadUrl,
+  fixedDownloadFileName,
+  deviationCount,
+  onFixAndDownload,
+  onDownloadDifferences,
+}) => {
   const [selectedFormat, setSelectedFormat] = useState('pdf');
 
   return (
@@ -64,8 +84,19 @@ const ExportTab: React.FC = () => {
         
         <div className="w-full max-w-lg aspect-[1/1.4] bg-white shadow-xl border border-gray-200 mt-8 p-8 flex flex-col items-center justify-center text-center text-text-muted">
           <FileText size={48} className="mb-4 opacity-20" />
-          <p className="font-medium text-lg text-primary mb-2">No Comparison Data</p>
-          <p className="text-sm">Please compare documents in the "Compare" tab first to generate a report preview.</p>
+          <p className="font-medium text-lg text-primary mb-2">
+            {canFixAndDownload ? 'Corrected Copy Ready' : 'No Comparison Data'}
+          </p>
+          <p className="text-sm">
+            {canFixAndDownload
+              ? `${copyFileName ?? 'Copy document'} can be fixed to match ${originalFileName ?? 'the original document'}.`
+              : 'Please compare documents in the "Compare" tab first to generate a report preview.'}
+          </p>
+          {canFixAndDownload && (
+            <p className="text-xs mt-3 text-text-muted">
+              {deviationCount} difference{deviationCount === 1 ? '' : 's'} will be replaced with the original document content and formatting.
+            </p>
+          )}
         </div>
         <p className="mt-4 text-sm text-text-muted flex items-center gap-2"><FileBarChart size={16}/> Previewing Executive Summary ({selectedFormat.toUpperCase()})</p>
       </div>
@@ -77,9 +108,39 @@ const ExportTab: React.FC = () => {
         </h3>
 
         <div className="space-y-3 mb-8">
-          <button className="w-full bg-accent text-primary font-bold py-3 rounded-lg shadow-sm flex items-center justify-center gap-2 hover:brightness-105 transition-all">
-            <Download size={18} /> Download {selectedFormat.toUpperCase()}
+          <button
+            type="button"
+            onClick={onFixAndDownload}
+            disabled={!canFixAndDownload}
+            className="w-full bg-primary text-white font-bold py-3 rounded-lg shadow-sm flex items-center justify-center gap-2 hover:bg-primary/90 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <WandSparkles size={18} /> Fix Copy & Download
           </button>
+          <button
+            type="button"
+            onClick={onFixAndDownload}
+            disabled={!canFixAndDownload}
+            className="w-full bg-accent text-primary font-bold py-3 rounded-lg shadow-sm flex items-center justify-center gap-2 hover:brightness-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={18} /> Download Fixed File
+          </button>
+          <button
+            type="button"
+            onClick={onDownloadDifferences}
+            disabled={deviationCount === 0}
+            className="w-full bg-white border border-primary/30 text-primary py-2.5 rounded shadow-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download size={18} /> Download Differences
+          </button>
+          {fixedDownloadUrl && (
+            <a
+              href={fixedDownloadUrl}
+              download={fixedDownloadFileName}
+              className="block text-xs font-semibold text-primary underline text-center"
+            >
+              Download did not start? Click here
+            </a>
+          )}
           <button className="w-full bg-white border border-muted-border text-text-main py-2.5 rounded shadow-sm font-medium flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors">
             <Mail size={18} /> Email Report
           </button>

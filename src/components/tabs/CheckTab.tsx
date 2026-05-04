@@ -1,14 +1,31 @@
 import React from 'react';
-import { CheckCircle, AlertTriangle, Clock, ShieldCheck, ThumbsUp, ThumbsDown, MessageSquare, History } from 'lucide-react';
+import { CheckCircle, AlertTriangle, Clock, ShieldCheck, ThumbsUp, ThumbsDown, MessageSquare, History, WandSparkles, Sparkles, Loader2 } from 'lucide-react';
 import type { Deviation } from '../../App';
 
 interface CheckTabProps {
   deviations: Deviation[];
+  canFixAndDownload: boolean;
+  isAiReviewing: boolean;
+  fixedDownloadUrl?: string;
+  fixedDownloadFileName?: string;
+  onFixAndDownload: () => void;
+  onAiReviewAll: () => void;
+  onDeviationStatusChange: (id: string, status: Deviation['status']) => void;
 }
 
-const CheckTab: React.FC<CheckTabProps> = ({ deviations }) => {
+const CheckTab: React.FC<CheckTabProps> = ({
+  deviations,
+  canFixAndDownload,
+  isAiReviewing,
+  fixedDownloadUrl,
+  fixedDownloadFileName,
+  onFixAndDownload,
+  onAiReviewAll,
+  onDeviationStatusChange,
+}) => {
   const pendingCount = deviations.filter(d => d.status === 'pending').length;
   const approvedCount = deviations.filter(d => d.status === 'accepted').length;
+  const rejectedCount = deviations.filter(d => d.status === 'rejected').length;
 
   return (
     <div className="flex-1 flex overflow-hidden bg-muted p-4 gap-4 h-full">
@@ -21,9 +38,20 @@ const CheckTab: React.FC<CheckTabProps> = ({ deviations }) => {
             </h2>
             <p className="text-sm text-text-muted">Review and validate document changes</p>
           </div>
-          <div className="flex gap-2 text-sm font-medium">
-            <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full">{pendingCount} Pending</span>
-            <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full">{approvedCount} Approved</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onAiReviewAll}
+              disabled={deviations.length === 0 || isAiReviewing}
+              className="bg-primary text-white px-3 py-1.5 rounded text-sm font-bold flex items-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isAiReviewing ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+              AI Review All
+            </button>
+            <div className="flex gap-2 text-sm font-medium">
+              <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full">{pendingCount} Pending</span>
+              <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full">{approvedCount} Approved</span>
+              <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full">{rejectedCount} Rejected</span>
+            </div>
           </div>
         </div>
 
@@ -42,6 +70,15 @@ const CheckTab: React.FC<CheckTabProps> = ({ deviations }) => {
                     {dev.type === 'Deviation' ? <AlertTriangle size={16} className="text-accent" /> : <Info size={16} className="text-primary" />}
                     <span className="font-semibold text-text-main">{dev.type} on Page {dev.page}</span>
                     <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded ml-2">High Risk</span>
+                    {dev.status !== 'pending' && (
+                      <span className={`text-xs px-2 py-0.5 rounded capitalize ${
+                        dev.status === 'accepted'
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {dev.status}
+                      </span>
+                    )}
                   </div>
                   <span className="text-xs text-text-muted flex items-center gap-1"><Clock size={12} /> Just now</span>
                 </div>
@@ -57,11 +94,31 @@ const CheckTab: React.FC<CheckTabProps> = ({ deviations }) => {
                   </div>
                 </div>
 
+                {dev.comment && (
+                  <div className="mb-4 bg-blue-50 border border-blue-100 rounded p-2 text-xs text-blue-900">
+                    <span className="font-bold">AI decision:</span> {dev.comment}
+                  </div>
+                )}
+
                 <div className="flex gap-2 items-center">
-                  <button className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded flex items-center justify-center gap-2 text-sm font-medium transition-colors">
+                  <button
+                    onClick={() => onDeviationStatusChange(dev.id, 'accepted')}
+                    className={`flex-1 py-1.5 rounded flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+                      dev.status === 'accepted'
+                        ? 'bg-green-700 text-white'
+                        : 'bg-green-600 hover:bg-green-700 text-white'
+                    }`}
+                  >
                     <ThumbsUp size={16} /> Approve
                   </button>
-                  <button className="flex-1 bg-white border border-red-200 text-red-600 hover:bg-red-50 py-1.5 rounded flex items-center justify-center gap-2 text-sm font-medium transition-colors">
+                  <button
+                    onClick={() => onDeviationStatusChange(dev.id, 'rejected')}
+                    className={`flex-1 border border-red-200 py-1.5 rounded flex items-center justify-center gap-2 text-sm font-medium transition-colors ${
+                      dev.status === 'rejected'
+                        ? 'bg-red-600 text-white'
+                        : 'bg-white text-red-600 hover:bg-red-50'
+                    }`}
+                  >
                     <ThumbsDown size={16} /> Reject
                   </button>
                   <button className="px-3 py-1.5 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded flex items-center justify-center transition-colors">
@@ -76,6 +133,31 @@ const CheckTab: React.FC<CheckTabProps> = ({ deviations }) => {
 
       {/* Right Column: Workflow & Audit */}
       <div className="w-80 flex flex-col gap-4">
+        {/* Validation Checklist */}
+        <div className="bg-white rounded-lg shadow-sm border border-muted-border p-4">
+          <h3 className="font-bold text-primary mb-3 text-sm">Document Repair</h3>
+          <p className="text-xs text-text-muted mb-3 leading-relaxed">
+            Replace the copy with the original document version and download the corrected file.
+          </p>
+          <button
+            type="button"
+            onClick={onFixAndDownload}
+            disabled={!canFixAndDownload}
+            className="w-full bg-primary text-white py-2.5 rounded text-sm font-bold flex items-center justify-center gap-2 hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <WandSparkles size={16} /> Fix Copy & Download
+          </button>
+          {fixedDownloadUrl && (
+            <a
+              href={fixedDownloadUrl}
+              download={fixedDownloadFileName}
+              className="block mt-2 text-xs font-semibold text-primary underline text-center"
+            >
+              Download did not start? Click here
+            </a>
+          )}
+        </div>
+
         {/* Validation Checklist */}
         <div className="bg-white rounded-lg shadow-sm border border-muted-border p-4">
           <h3 className="font-bold text-primary mb-3 text-sm">Validation Checklist</h3>

@@ -72,3 +72,37 @@
 .docx-viewer-error {
   color: #c00;
 }
+
+/* ── PDF canvas viewer ──────────────────────────────────────── */
+.pdf-canvas-container {
+  min-height: 100%;
+}
+
+.pdf-text-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  opacity: 0.25;
+  line-height: 1;
+  z-index: 2;
+}
+
+.pdf-text-layer > span {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  pointer-events: all;
+}
+
+.pdf-text-layer > span::selection {
+  background: rgba(0, 100, 200, 0.3);
+}
+
+.pdf-text-layer > span::-moz-selection {
+  background: rgba(0, 100, 200, 0.3);
+}
+
+.dev-highlight {
+  transition: background-color 0.3s ease;
+}
