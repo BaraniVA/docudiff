@@ -39,3 +39,6 @@ Desktop.ini
 # Build outputs
 build/
 out/
+
+# Vite temporary files
+vite.config.ts.timestamp-*
